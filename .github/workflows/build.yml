@@ -25,6 +25,17 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      - name: Prepare Android debug keystore
+        run: |
+          mkdir -p "$HOME/.android"
+          echo "ANDROID_USER_HOME=$HOME/.android" >> "$GITHUB_ENV"
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US" > /dev/null 2>&1
+          fi
+
       - name: Build debug APK
         run: ./gradlew assembleDebug
 
@@ -50,6 +61,17 @@ jobs:
         run: yes | sudo $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
 
       - uses: gradle/actions/setup-gradle@v4
+
+      - name: Prepare Android debug keystore
+        run: |
+          mkdir -p "$HOME/.android"
+          echo "ANDROID_USER_HOME=$HOME/.android" >> "$GITHUB_ENV"
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US" > /dev/null 2>&1
+          fi
 
       - name: Build release APK
         run: ./gradlew assembleRelease
