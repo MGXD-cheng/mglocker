@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">MG locker</string>
+    <string name="admin_label">mglocker 设备锁定服务</string>
+    <string name="admin_description">激活后允许应用锁定设备进入 Kiosk 模式，仅可通过 ADB 解除</string>
+</resources>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies>
+        <!-- Lock Task 白名单由代码动态控制，无需额外策略声明 -->
+    </uses-policies>
+</device-admin>

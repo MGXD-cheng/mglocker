@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  mglocker 自适应图标前景：
+  白色锁 + 锁身上镂空 "MG"
+  深色背景由 ic_launcher_background.xml 提供
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 锁梁（拱形），白色粗弧线 -->
+    <path
+        android:pathData="M32,50 L32,43 A22,22 0 0 1 76,43 L76,50"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="9"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+    <!-- 锁身（白色圆角矩形） -->
+    <path
+        android:pathData="M32,58 A6,6 0 0 1 38,52 L70,52 A6,6 0 0 1 76,58 L76,86 A6,6 0 0 1 70,92 L38,92 A6,6 0 0 1 32,86 Z"
+        android:fillColor="#FFFFFF" />
+
+    <!-- 锁孔（深色圆点） -->
+    <path
+        android:pathData="M54,60 A6,6 0 1 0 54,72 A6,6 0 1 0 54,60 Z"
+        android:fillColor="#14141E" />
+
+    <!-- 字母 M（镂空） -->
+    <path
+        android:pathData="M41,89 L41,79 L49,87 L57,79 L57,89"
+        android:strokeColor="#14141E"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+
+    <!-- 字母 G（镂空） -->
+    <path
+        android:pathData="M63,79 A6,6 0 0 0 63,89 L63,84 L57,84"
+        android:strokeColor="#14141E"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+
+</vector>
