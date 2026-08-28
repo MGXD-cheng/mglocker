@@ -45,6 +45,15 @@ bash export_apk.sh --no-daemon
 
 电视部署流程：推送 APK 到电视 Download → 当贝市场「APK 管理器」→ 遥控器安装。
 
+## 自动构建（GitHub Actions）
+
+| 触发 | 动作 |
+|------|------|
+| `push` 到 `main` | 自动构建 Debug APK → Actions 页面上传 Artifact |
+| 打 `tag v*`（如 `v2.5`） | 自动构建 Release APK → 自动发布 GitHub Release |
+
+手动触发：Actions 页面 → Workflow → Run workflow。
+
 ## 局域网控制台
 
 - 地址：`http://<电视IP>:8080`（电视 IP 显示在锁定界面）

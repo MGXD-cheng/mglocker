@@ -45,11 +45,15 @@ android {
     }
 }
 
-// Force use of ARM64 binaries for AAPT2 in Proot environment
-configurations.all {
-    resolutionStrategy.eachDependency {
-        if (requested.group == "com.android.tools.build" && requested.name == "aapt2") {
-            useTarget("com.android.tools.build:aapt2:${'$'}{requested.version}:linux-aarch64")
+// Force use of ARM64 binaries for AAPT2 in Proot environment (aarch64 host).
+// 仅 ARM64 环境（本地 Proot）强制替换为 linux-aarch64 版 AAPT2；
+// x86_64 环境（如 GitHub Actions runner）保持官方默认，避免 Exec format error。
+if (System.getProperty("os.arch")?.contains("aarch64", ignoreCase = true) == true) {
+    configurations.all {
+        resolutionStrategy.eachDependency {
+            if (requested.group == "com.android.tools.build" && requested.name == "aapt2") {
+                useTarget("com.android.tools.build:aapt2:${'$'}{requested.version}:linux-aarch64")
+            }
         }
     }
 }
