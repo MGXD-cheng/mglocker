@@ -3,7 +3,6 @@ package com.mgxd.mglocker
 import android.content.Context
 import android.content.Intent
 import fi.iki.elonen.NanoHTTPD
-import java.net.NetworkInterface
 
 /**
  * 局域网远程控制 HTTP 服务器（NanoHTTPD，端口 8080）。
@@ -92,11 +91,15 @@ class LockerHttpServer(
             if (rangeEnabled && (!timePattern.matches(rangeStart) || !timePattern.matches(rangeEnd))) {
                 return settingsResult(false, "时间段起止时间格式应为 HH:mm，例如 22:00-06:00")
             }
-            SettingsStore.setLockEnabled(context, lockEnabled)
-            SettingsStore.setScheduledLockTime(context, scheduled)
-            SettingsStore.setScheduledRangeEnabled(context, rangeEnabled)
-            SettingsStore.setScheduledRangeStart(context, if (rangeEnabled) rangeStart else "")
-            SettingsStore.setScheduledRangeEnd(context, if (rangeEnabled) rangeEnd else "")
+            // v2.5：单次 edit().apply() 批量落盘（原为 5 次独立 apply）
+            SettingsStore.saveAll(
+                ctx = context,
+                lockEnabled = lockEnabled,
+                scheduledLock = scheduled,
+                rangeEnabled = rangeEnabled,
+                rangeStart = if (rangeEnabled) rangeStart else "",
+                rangeEnd = if (rangeEnabled) rangeEnd else ""
+            )
             return settingsResult(true, "已保存，重启后依然生效")
         }
         return newFixedLengthResponse(
@@ -119,14 +122,20 @@ class LockerHttpServer(
         )
     }
 
+    /** 版本号懒加载缓存（v2.5）：原实现每次 /status 请求都做一次 PackageManager Binder 调用 */
+    @Volatile
+    private var cachedVersion: String? = null
+
+    private fun versionName(): String =
+        cachedVersion ?: (try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        } catch (_: Exception) {
+            null
+        } ?: "?").also { cachedVersion = it }
+
     private fun statusJson(): String {
         val state = if (MainActivity.allowExit) "unlocked" else "locked"
-        val version = try {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
-        } catch (_: Exception) {
-            "?"
-        }
-        return "{\"app\":\"MG Locker\",\"version\":\"$version\",\"state\":\"$state\",\"ip\":\"${localIp()}\",\"port\":8080}"
+        return "{\"app\":\"MG Locker\",\"version\":\"${versionName()}\",\"state\":\"$state\",\"ip\":\"${localIp()}\",\"port\":8080}"
     }
 
     private fun page(): String {
@@ -294,22 +303,11 @@ class LockerHttpServer(
         )
     }
 
-    /** 获取 Wi-Fi 局域网 IPv4 地址（用于页面展示） */
+    /** 获取局域网 IPv4 地址（用于页面展示）。v2.5：读 IpProvider 内存缓存，
+     *  不再每次 HTTP 请求都枚举网络接口（NanoHTTPD 线程上的系统调用开销）。 */
     private fun localIp(): String {
-        return try {
-            val interfaces = NetworkInterface.getNetworkInterfaces()
-            while (interfaces.hasMoreElements()) {
-                val intf = interfaces.nextElement()
-                if (intf.isLoopback || !intf.isUp) continue
-                val addrs = intf.inetAddresses
-                while (addrs.hasMoreElements()) {
-                    val addr = addrs.nextElement()
-                    if (addr is java.net.Inet4Address) return addr.hostAddress ?: "unknown"
-                }
-            }
-            "unknown"
-        } catch (_: Exception) {
-            "unknown"
-        }
+        val ip = IpProvider.cached()
+        if (ip.isEmpty()) IpProvider.refresh() // 后台补一次，本次响应先返回 unknown
+        return ip.ifEmpty { "unknown" }
     }
 }

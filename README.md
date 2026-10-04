@@ -5,9 +5,20 @@
 Android 电视锁机（Kiosk）应用：把电视锁定在一个全屏界面，防止小孩/客人随意退出，家长可通过手机浏览器或遥控器秘技远程解锁。
 
 - 📦 包名：`com.mgxd.mglocker`
-- 🎬 当前版本：**v2.4**（versionCode 24）
+- 🎬 当前版本：**v2.5**（versionCode 25）
 - 📺 适配：Android 6.0+（已在 TCL 深度定制 Android 6.0 电视上实机验证，无 root）
 - 🛠️ 技术栈：Kotlin 2.3.10 · Jetpack Compose（BOM 2026.01.01）· AGP 9.0.0 · NanoHTTPD 2.3.1
+
+## 性能设计（v2.5 审计优化）
+
+| 优化点 | 说明 |
+|--------|------|
+| 🌐 IP 获取后台化 | `IpProvider` 后台单线程枚举网卡 + 内存缓存（30s TTL）；主线程/HTTP 线程只读缓存，杜绝主线程系统调用 |
+| ⚙️ 配置内存缓存 | SharedPreferences 读值全部走 `@Volatile` 缓存，500ms 轮询的读取降为字段读；`saveAll()` 批量落盘 |
+| ⏱️ 自适应轮询 | 锁定中 500ms（Home 弹回及时）；已解锁 2s（守护无意义时降频 4 倍） |
+| 💓 自适应心跳 | 锁定中 30s 精确闹钟；解锁态 5 分钟非精确闹钟（Doze 友好） |
+| 📡 HTTP 响应缓存 | `/status` 的版本号、IP 均缓存，不再每请求做 Binder 调用 / 枚举网卡 |
+| 🩺 StrictMode | Debug 包启用（FLAG_DEBUGGABLE 判定），主线程 I/O 与泄漏即时打到 logcat |
 
 ## 核心能力
 

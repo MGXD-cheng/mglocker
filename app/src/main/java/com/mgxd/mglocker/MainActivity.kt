@@ -11,8 +11,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import java.net.Inet4Address
-import java.net.NetworkInterface
 import android.provider.Settings
 import android.view.KeyEvent
 import android.view.WindowManager
@@ -103,22 +101,34 @@ class MainActivity : ComponentActivity() {
         /** 正在跳转系统设置页（管理员激活/屏幕固定）——期间禁止抢回前台（GuardService 轮询也读取此标志） */
         @Volatile
         var navigatingAway = false
+
+        /** v2.5：无 IP 时的最大重试次数（每 5 秒一次，24 次 = 2 分钟），避免未联网时无限轮询 */
+        private const val MAX_IP_REFRESH_ATTEMPTS = 24
     }
 
     private var lockState by mutableStateOf(LockState.UNKNOWN)
     /** 诊断信息：setLockTaskPackages / startLockTask 的真实异常，显示在界面上 */
     private var errorDetail by mutableStateOf("")
 
-    /** 本机局域网 IP：锁定界面实时显示，方便从任意设备访问 8080 控制台（http://IP:8080） */
-    private var ipAddress by mutableStateOf(getLocalIpAddress())
+    /** 本机局域网 IP：锁定界面实时显示，方便从任意设备访问 8080 控制台（http://IP:8080）
+     *  v2.5：初始为空串（原实现构造期就枚举网卡，主线程系统调用拖慢启动），
+     *  由 IpProvider 在后台线程枚举后回填。 */
+    private var ipAddress by mutableStateOf("")
 
-    /** IP 定时刷新：开机瞬间 WiFi 可能未就绪，连上后自动补上正确 IP（每 5 秒重试直到拿到） */
+    /** IP 定时刷新（v2.5）：枚举在 IpProvider 后台线程执行，主线程只读缓存。
+     *  无 IP 时每 5 秒重试，最多 MAX_IP_REFRESH_ATTEMPTS 次后停止，等下次 onResume 再试。 */
     private val ipHandler = Handler(Looper.getMainLooper())
     private val ipRefreshRunnable = object : Runnable {
+        private var attempts = 0
+
         override fun run() {
             if (isFinishing || isDestroyed) return
-            ipAddress = getLocalIpAddress()
-            if (ipAddress.isBlank()) {
+            attempts++
+            IpProvider.refresh(force = true) { ip ->
+                ipAddress = ip
+                if (ip.isNotEmpty()) attempts = 0
+            }
+            if (attempts in 1..MAX_IP_REFRESH_ATTEMPTS) {
                 ipHandler.postDelayed(this, 5000)
             }
         }
@@ -255,8 +265,8 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         isForeground = true
         lastActivitySeen = SystemClock.uptimeMillis()
-        // 刷新本机 IP（DHCP 可能变化），保证锁定界面显示的控制台地址始终可用
-        ipAddress = getLocalIpAddress()
+        // 刷新本机 IP（DHCP 可能变化）：v2.5 起由 IpProvider 后台枚举，主线程只读缓存
+        IpProvider.refresh { ip -> ipAddress = ip }
         // 从系统设置页返回，复位跳转标志
         navigatingAway = false
         // 残留实例兜底：解锁后若存在未收到广播的实例，回到前台即自动退出
@@ -269,7 +279,7 @@ class MainActivity : ComponentActivity() {
         ensureLocked()
         // 开机/解锁回到前台时刷新 IP（WiFi 未就绪则启动定时重试）
         ipHandler.removeCallbacks(ipRefreshRunnable)
-        if (ipAddress.isBlank()) {
+        if (IpProvider.cached().isBlank()) {
             ipHandler.post(ipRefreshRunnable)
         }
     }
@@ -302,35 +312,6 @@ class MainActivity : ComponentActivity() {
     private fun isLauncherOpen(intent: Intent?): Boolean {
         return intent?.action == Intent.ACTION_MAIN &&
             intent.categories?.contains(Intent.CATEGORY_LAUNCHER) == true
-    }
-
-    /**
-     * 获取本机局域网 IPv4 地址（优先 192.168/10/172 私有网段，兼容 wlan0/eth0 等网卡）。
-     * 锁定界面用它显示 8080 控制台地址，方便远程访问。
-     */
-    private fun getLocalIpAddress(): String {
-        var fallback = ""
-        try {
-            val netIfs = NetworkInterface.getNetworkInterfaces() ?: return ""
-            while (netIfs.hasMoreElements()) {
-                val ni = netIfs.nextElement()
-                if (ni.isLoopback || !ni.isUp) continue
-                val addrs = ni.inetAddresses ?: continue
-                while (addrs.hasMoreElements()) {
-                    val addr = addrs.nextElement()
-                    if (addr is Inet4Address) {
-                        val ip = addr.hostAddress ?: continue
-                        if (ip.startsWith("192.168.") || ip.startsWith("10.") || ip.startsWith("172.")) {
-                            return ip
-                        }
-                        if (fallback.isEmpty()) fallback = ip
-                    }
-                }
-            }
-        } catch (_: Exception) {
-            // 获取失败则返回空，界面不显示 IP 行
-        }
-        return fallback
     }
 
     /**

@@ -22,6 +22,8 @@ class HeartbeatReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_HEARTBEAT = "com.mgxd.mglocker.ACTION_HEARTBEAT"
         private const val INTERVAL_MS = 30_000L
+        /** 解锁态 / 关闭锁定时的空闲心跳间隔（5 分钟，非精确闹钟） */
+        private const val IDLE_INTERVAL_MS = 300_000L
 
         /** 注册/续期心跳闹钟（每次心跳后自动续期，形成循环） */
         fun schedule(context: Context) {
@@ -32,12 +34,24 @@ class HeartbeatReceiver : BroadcastReceiver() {
                 Intent(context, HeartbeatReceiver::class.java).setAction(ACTION_HEARTBEAT),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            // setExactAndAllowWhileIdle：亮屏/插电时精确 60s 触发；Doze 下放宽但可接受
-            am.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP,
-                System.currentTimeMillis() + INTERVAL_MS,
-                pi
-            )
+            // v2.5 自适应心跳：
+            //  - 锁定中：30s 精确闹钟（setExactAndAllowWhileIdle），把无人值守真空期压到最短；
+            //  - 已解锁 / 关闭锁定：降为 5 分钟非精确闹钟（set）——不需要频繁守护，
+            //    避免每 30s 一次精确唤醒的耗电（Doze 下由系统合并调度，仍可兜底复活）。
+            val guarding = !MainActivity.allowExit && SettingsStore.isLockEnabled(context)
+            if (guarding) {
+                am.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    System.currentTimeMillis() + INTERVAL_MS,
+                    pi
+                )
+            } else {
+                am.set(
+                    AlarmManager.RTC_WAKEUP,
+                    System.currentTimeMillis() + IDLE_INTERVAL_MS,
+                    pi
+                )
+            }
         }
     }
 

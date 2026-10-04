@@ -67,7 +67,10 @@ class GuardService : Service() {
                     // 拉起失败不崩溃，下一轮继续
                 }
             }
-            handler.postDelayed(this, 500)
+            // v2.5 自适应轮询：锁定中 500ms（Home 弹回需及时）；
+            // 已解锁（allowExit=true）时守护无意义，降频到 2s——CPU 唤醒减少 4 倍，
+            // 且 2s 仍远小于定时锁定的分钟级检查精度，功能无感知。
+            handler.postDelayed(this, if (MainActivity.allowExit) 2000L else 500L)
         }
     }
 

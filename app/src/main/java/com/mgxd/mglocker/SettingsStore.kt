@@ -1,6 +1,7 @@
 package com.mgxd.mglocker
 
 import android.content.Context
+import android.content.SharedPreferences
 import java.util.Calendar
 
 /**
@@ -14,6 +15,13 @@ import java.util.Calendar
  *  - 时间段锁定 scheduled_range_enabled + scheduled_range_start/end：
  *    独立开关。开启后，处于设定时间段内（支持跨午夜）即自动锁定，
  *    视为手动锁定（不受总开关 lock_enabled 约束，独立生效）。
+ *
+ * v2.5 性能优化：
+ * ① SharedPreferences 实例懒加载缓存（避免每次 getSharedPreferences 的锁开销）；
+ * ② 所有读值走 @Volatile 内存缓存——GuardService 每 500ms 一次的读取从
+ *    "每次进 SharedPreferences" 降级为一次字段读（同进程内所有写都经本类，缓存可靠）；
+ * ③ 时间段起止解析结果缓存，避免每分钟 split/substring 的字符串分配；
+ * ④ 提供 saveAll() 批量保存：控制台一次提交只做一次 edit().apply()（原为 5 次）。
  */
 object SettingsStore {
     private const val PREFS = "locker_settings"
@@ -23,23 +31,38 @@ object SettingsStore {
     private const val KEY_SCHEDULED_RANGE_START = "scheduled_range_start"
     private const val KEY_SCHEDULED_RANGE_END = "scheduled_range_end"
 
+    /** SharedPreferences 实例缓存（applicationContext，进程级生命周期，无泄漏风险） */
+    @Volatile
+    private var prefsRef: SharedPreferences? = null
+
+    private fun prefs(ctx: Context): SharedPreferences =
+        prefsRef ?: ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .also { prefsRef = it }
+
+    // ==================== 内存值缓存 ====================
+    @Volatile private var cLockEnabled: Boolean? = null
+    @Volatile private var cScheduledLock: String? = null
+    @Volatile private var cRangeEnabled: Boolean? = null
+    @Volatile private var cRangeStart: String? = null
+    @Volatile private var cRangeEnd: String? = null
+
     /** 锁定总开关，默认开启 */
     fun isLockEnabled(ctx: Context): Boolean =
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_LOCK_ENABLED, true)
+        cLockEnabled ?: prefs(ctx).getBoolean(KEY_LOCK_ENABLED, true).also { cLockEnabled = it }
 
     fun setLockEnabled(ctx: Context, enabled: Boolean) {
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putBoolean(KEY_LOCK_ENABLED, enabled).apply()
+        cLockEnabled = enabled
+        prefs(ctx).edit().putBoolean(KEY_LOCK_ENABLED, enabled).apply()
     }
 
     /** 定时锁定时间 "HH:mm"，空串 = 不启用 */
     fun scheduledLockTime(ctx: Context): String =
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_SCHEDULED_LOCK, "") ?: ""
+        cScheduledLock ?: (prefs(ctx).getString(KEY_SCHEDULED_LOCK, "") ?: "")
+            .also { cScheduledLock = it }
 
     fun setScheduledLockTime(ctx: Context, time: String) {
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putString(KEY_SCHEDULED_LOCK, time).apply()
+        cScheduledLock = time
+        prefs(ctx).edit().putString(KEY_SCHEDULED_LOCK, time).apply()
     }
 
     /** 是否到达定时锁定时刻（分钟级匹配，每天循环） */
@@ -57,32 +80,87 @@ object SettingsStore {
 
     /** 时间段锁定独立开关，默认关闭（关闭 = 时间段配置无效） */
     fun isScheduledRangeEnabled(ctx: Context): Boolean =
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_SCHEDULED_RANGE_ENABLED, false)
+        cRangeEnabled ?: prefs(ctx).getBoolean(KEY_SCHEDULED_RANGE_ENABLED, false)
+            .also { cRangeEnabled = it }
 
     fun setScheduledRangeEnabled(ctx: Context, enabled: Boolean) {
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putBoolean(KEY_SCHEDULED_RANGE_ENABLED, enabled).apply()
+        cRangeEnabled = enabled
+        prefs(ctx).edit().putBoolean(KEY_SCHEDULED_RANGE_ENABLED, enabled).apply()
     }
 
     /** 时间段开始 "HH:mm"，空串 = 未配置 */
     fun scheduledRangeStart(ctx: Context): String =
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_SCHEDULED_RANGE_START, "") ?: ""
+        cRangeStart ?: (prefs(ctx).getString(KEY_SCHEDULED_RANGE_START, "") ?: "")
+            .also { cRangeStart = it }
 
     fun setScheduledRangeStart(ctx: Context, time: String) {
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putString(KEY_SCHEDULED_RANGE_START, time).apply()
+        cRangeStart = time
+        prefs(ctx).edit().putString(KEY_SCHEDULED_RANGE_START, time).apply()
     }
 
     /** 时间段结束 "HH:mm"，空串 = 未配置 */
     fun scheduledRangeEnd(ctx: Context): String =
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_SCHEDULED_RANGE_END, "") ?: ""
+        cRangeEnd ?: (prefs(ctx).getString(KEY_SCHEDULED_RANGE_END, "") ?: "")
+            .also { cRangeEnd = it }
 
     fun setScheduledRangeEnd(ctx: Context, time: String) {
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putString(KEY_SCHEDULED_RANGE_END, time).apply()
+        cRangeEnd = time
+        prefs(ctx).edit().putString(KEY_SCHEDULED_RANGE_END, time).apply()
+    }
+
+    /**
+     * 批量保存（v2.5）：控制台一次提交单次 edit().apply()，
+     * 避免 5 次独立 apply 累积 QueuedWork 写入压力。
+     */
+    fun saveAll(
+        ctx: Context,
+        lockEnabled: Boolean,
+        scheduledLock: String,
+        rangeEnabled: Boolean,
+        rangeStart: String,
+        rangeEnd: String
+    ) {
+        cLockEnabled = lockEnabled
+        cScheduledLock = scheduledLock
+        cRangeEnabled = rangeEnabled
+        cRangeStart = rangeStart
+        cRangeEnd = rangeEnd
+        prefs(ctx).edit()
+            .putBoolean(KEY_LOCK_ENABLED, lockEnabled)
+            .putString(KEY_SCHEDULED_LOCK, scheduledLock)
+            .putBoolean(KEY_SCHEDULED_RANGE_ENABLED, rangeEnabled)
+            .putString(KEY_SCHEDULED_RANGE_START, rangeStart)
+            .putString(KEY_SCHEDULED_RANGE_END, rangeEnd)
+            .apply()
+    }
+
+    // ==================== 时间段解析结果缓存（避免每分钟字符串分配） ====================
+    @Volatile private var parsedStartSrc: String = "\u0000"
+    @Volatile private var parsedStartMin: Int = -1
+    @Volatile private var parsedEndSrc: String = "\u0000"
+    @Volatile private var parsedEndMin: Int = -1
+
+    /** "HH:mm" → 当日分钟数；非法返回 -1（带来源串缓存，串不变不重复解析） */
+    private fun minuteOf(src: String, isStart: Boolean): Int {
+        if (isStart) {
+            if (src != parsedStartSrc) {
+                parsedStartSrc = src
+                parsedStartMin = parseHmToMinute(src)
+            }
+            return parsedStartMin
+        }
+        if (src != parsedEndSrc) {
+            parsedEndSrc = src
+            parsedEndMin = parseHmToMinute(src)
+        }
+        return parsedEndMin
+    }
+
+    private fun parseHmToMinute(s: String): Int {
+        val h = s.substringBefore(":").toIntOrNull() ?: return -1
+        val m = s.substringAfter(":").toIntOrNull() ?: return -1
+        if (h !in 0..23 || m !in 0..59) return -1
+        return h * 60 + m
     }
 
     /**
@@ -94,16 +172,9 @@ object SettingsStore {
      */
     fun inScheduledRange(ctx: Context, now: Calendar = Calendar.getInstance()): Boolean {
         if (!isScheduledRangeEnabled(ctx)) return false
-        val s = scheduledRangeStart(ctx)
-        val e = scheduledRangeEnd(ctx)
-        if (s.isBlank() || e.isBlank()) return false
-        val startMin = s.substringBefore(":").toIntOrNull()?.let { h ->
-            s.substringAfter(":").toIntOrNull()?.let { m -> h * 60 + m }
-        } ?: return false
-        val endMin = e.substringBefore(":").toIntOrNull()?.let { h ->
-            e.substringAfter(":").toIntOrNull()?.let { m -> h * 60 + m }
-        } ?: return false
-        if (startMin < 0 || endMin < 0 || startMin > 1439 || endMin > 1439) return false
+        val startMin = minuteOf(scheduledRangeStart(ctx), isStart = true)
+        val endMin = minuteOf(scheduledRangeEnd(ctx), isStart = false)
+        if (startMin < 0 || endMin < 0) return false
         val nowMin = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
         return when {
             startMin == endMin -> true                       // 全天
